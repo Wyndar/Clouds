@@ -106,7 +106,7 @@ public class CloudRenderFeature : ScriptableRendererFeature {
                     context.cmd.SetGlobalTexture ("_MainTex", data.cameraColor);
                     context.cmd.DrawMesh (RenderingUtils.fullscreenMesh, Matrix4x4.identity, data.material);
 
-                    context.cmd.BlitTexture (data.tempColor, data.cameraColor);
+                    Blitter.BlitTexture (context.cmd, data.tempColor, data.cameraColor);
                 });
             }
         }
