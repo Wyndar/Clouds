@@ -1,6 +1,9 @@
 using UnityEngine;
 using UnityEngine.Rendering;
 using UnityEngine.Rendering.Universal;
+#if UNITY_6000_0_OR_NEWER
+using UnityEngine.Rendering.RenderGraphModule;
+#endif
 
 public class CloudRenderFeature : ScriptableRendererFeature {
     class CloudRenderPass : ScriptableRenderPass {
@@ -51,6 +54,64 @@ public class CloudRenderFeature : ScriptableRendererFeature {
         public override void OnCameraCleanup (CommandBuffer cmd) {
             cameraColorTarget = null;
         }
+
+#if UNITY_6000_0_OR_NEWER
+        class PassData {
+            public TextureHandle cameraColor;
+            public TextureHandle tempColor;
+            public Material material;
+        }
+
+        public override void RecordRenderGraph (RenderGraph renderGraph, ContextContainer frameData) {
+            if (renderGraph == null) {
+                return;
+            }
+
+            var cameraData = frameData.Get<UniversalCameraData> ();
+            var camera = cameraData.camera;
+            if (camera == null) {
+                return;
+            }
+
+            var cloudMaster = camera.GetComponent<CloudMaster> ();
+            if (cloudMaster == null) {
+                return;
+            }
+
+            if (!cloudMaster.TryPrepareMaterial (out var material)) {
+                return;
+            }
+
+            var resourceData = frameData.Get<UniversalResourceData> ();
+            var targetDescriptor = cameraData.cameraTargetDescriptor;
+            targetDescriptor.depthBufferBits = 0;
+            targetDescriptor.msaaSamples = 1;
+
+            var tempDesc = new TextureDesc (targetDescriptor.width, targetDescriptor.height) {
+                colorFormat = targetDescriptor.graphicsFormat,
+                depthBufferBits = DepthBits.None,
+                msaaSamples = 1,
+                filterMode = FilterMode.Bilinear,
+                wrapMode = TextureWrapMode.Clamp,
+                name = "_CloudsTempTexture"
+            };
+
+            using (var builder = renderGraph.AddRasterRenderPass<PassData> (profilerTag, out var passData, new ProfilingSampler (profilerTag))) {
+                var tempTexture = renderGraph.CreateTexture (tempDesc);
+                passData.cameraColor = builder.UseTexture (resourceData.activeColorTexture, AccessFlags.ReadWrite);
+                passData.tempColor = builder.UseTexture (tempTexture, AccessFlags.ReadWrite);
+                passData.material = material;
+
+                builder.SetRenderFunc ((PassData data, RasterGraphContext context) => {
+                    context.cmd.SetRenderTarget (data.tempColor);
+                    context.cmd.SetGlobalTexture ("_MainTex", data.cameraColor);
+                    context.cmd.DrawMesh (RenderingUtils.fullscreenMesh, Matrix4x4.identity, data.material);
+
+                    Blitter.BlitTexture (context.cmd, data.tempColor, data.cameraColor);
+                });
+            }
+        }
+#endif
 
         public void Dispose () {
             tempColorTarget?.Release ();
