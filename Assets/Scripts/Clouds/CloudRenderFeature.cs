@@ -85,12 +85,12 @@ public class CloudRenderFeature : ScriptableRendererFeature {
             var resourceData = frameData.Get<UniversalResourceData> ();
             var targetDescriptor = cameraData.cameraTargetDescriptor;
             targetDescriptor.depthBufferBits = 0;
-            targetDescriptor.msaaSamples = 1;
+            targetDescriptor.msaaSamples = MSAASamples.None;
 
             var tempDesc = new TextureDesc (targetDescriptor.width, targetDescriptor.height) {
                 colorFormat = targetDescriptor.graphicsFormat,
                 depthBufferBits = DepthBits.None,
-                msaaSamples = 1,
+                msaaSamples = MSAASamples.None,
                 filterMode = FilterMode.Bilinear,
                 wrapMode = TextureWrapMode.Clamp,
                 name = "_CloudsTempTexture"
@@ -98,16 +98,19 @@ public class CloudRenderFeature : ScriptableRendererFeature {
 
             using (var builder = renderGraph.AddRasterRenderPass<PassData> (profilerTag, out var passData, new ProfilingSampler (profilerTag))) {
                 var tempTexture = renderGraph.CreateTexture (tempDesc);
-                passData.cameraColor = builder.UseTexture (resourceData.activeColorTexture, AccessFlags.ReadWrite);
-                passData.tempColor = builder.UseTexture (tempTexture, AccessFlags.ReadWrite);
+                passData.cameraColor = resourceData.activeColorTexture;
+                passData.tempColor = tempTexture;
+                builder.UseTexture (passData.cameraColor, AccessFlags.ReadWrite);
+                builder.UseTexture (passData.tempColor, AccessFlags.ReadWrite);
+                builder.SetRenderAttachment (passData.tempColor, 0);
                 passData.material = material;
 
                 builder.SetRenderFunc ((PassData data, RasterGraphContext context) => {
-                    context.cmd.SetRenderTarget (data.tempColor);
+                    context.cmd.SetRenderAttachment (data.tempColor, 0, AccessFlags.Write);
                     context.cmd.SetGlobalTexture ("_MainTex", data.cameraColor);
                     context.cmd.DrawMesh (RenderingUtils.fullscreenMesh, Matrix4x4.identity, data.material);
 
-                    Blitter.BlitTexture (context.cmd, data.tempColor, data.cameraColor);
+                    Blitter.BlitTexture (context.cmd, in data.tempColor, in data.cameraColor);
                 });
             }
         }
