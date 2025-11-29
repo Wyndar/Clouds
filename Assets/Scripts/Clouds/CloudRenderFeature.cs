@@ -1,9 +1,7 @@
 using UnityEngine;
 using UnityEngine.Rendering;
 using UnityEngine.Rendering.Universal;
-#if UNITY_6000_0_OR_NEWER
 using UnityEngine.Rendering.RenderGraphModule;
-#endif
 
 public class CloudRenderFeature : ScriptableRendererFeature {
     class CloudRenderPass : ScriptableRenderPass {
@@ -55,7 +53,6 @@ public class CloudRenderFeature : ScriptableRendererFeature {
             cameraColorTarget = null;
         }
 
-#if UNITY_6000_0_OR_NEWER
         class PassData {
             public TextureHandle cameraColor;
             public TextureHandle tempColor;
@@ -114,7 +111,6 @@ public class CloudRenderFeature : ScriptableRendererFeature {
                 });
             }
         }
-#endif
 
         public void Dispose () {
             tempColorTarget?.Release ();
