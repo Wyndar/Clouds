@@ -17,7 +17,7 @@ public class CloudRenderFeature : ScriptableRendererFeature {
             cameraColorTarget = renderingData.cameraData.renderer.cameraColorTargetHandle;
             var descriptor = renderingData.cameraData.cameraTargetDescriptor;
             descriptor.depthBufferBits = 0;
-            descriptor.msaaSamples = 1;
+            descriptor.msaaSamples = (int)MSAASamples.None;
             RenderingUtils.ReAllocateIfNeeded (ref tempColorTarget, descriptor, FilterMode.Bilinear, TextureWrapMode.Clamp, name: "_CloudsTempTexture");
         }
 
@@ -82,7 +82,7 @@ public class CloudRenderFeature : ScriptableRendererFeature {
             var resourceData = frameData.Get<UniversalResourceData> ();
             var targetDescriptor = cameraData.cameraTargetDescriptor;
             targetDescriptor.depthBufferBits = 0;
-            targetDescriptor.msaaSamples = MSAASamples.None;
+            targetDescriptor.msaaSamples = (int)MSAASamples.None;
 
             var tempDesc = new TextureDesc (targetDescriptor.width, targetDescriptor.height) {
                 colorFormat = targetDescriptor.graphicsFormat,
@@ -103,11 +103,10 @@ public class CloudRenderFeature : ScriptableRendererFeature {
                 passData.material = material;
 
                 builder.SetRenderFunc ((PassData data, RasterGraphContext context) => {
-                    context.cmd.SetRenderAttachment (data.tempColor, 0, AccessFlags.Write);
                     context.cmd.SetGlobalTexture ("_MainTex", data.cameraColor);
                     context.cmd.DrawMesh (RenderingUtils.fullscreenMesh, Matrix4x4.identity, data.material);
 
-                    Blitter.BlitTexture (context.cmd, in data.tempColor, in data.cameraColor);
+                    context.cmd.CopyTexture (data.tempColor, data.cameraColor);
                 });
             }
         }
