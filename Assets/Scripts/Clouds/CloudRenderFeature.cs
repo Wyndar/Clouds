@@ -12,11 +12,8 @@ public class CloudRenderFeature : ScriptableRendererFeature {
             renderPassEvent = RenderPassEvent.AfterRenderingSkybox;
         }
 
-        public void Setup (RTHandle colorTarget) {
-            cameraColorTarget = colorTarget;
-        }
-
         public override void OnCameraSetup (CommandBuffer cmd, ref RenderingData renderingData) {
+            cameraColorTarget = renderingData.cameraData.renderer.cameraColorTargetHandle;
             var descriptor = renderingData.cameraData.cameraTargetDescriptor;
             descriptor.depthBufferBits = 0;
             descriptor.msaaSamples = 1;
@@ -71,7 +68,6 @@ public class CloudRenderFeature : ScriptableRendererFeature {
             return;
         }
 
-        cloudPass.Setup (renderer.cameraColorTargetHandle);
         renderer.EnqueuePass (cloudPass);
     }
 
