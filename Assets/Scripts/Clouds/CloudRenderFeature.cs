@@ -18,7 +18,7 @@ public class CloudRenderFeature : ScriptableRendererFeature {
             var descriptor = renderingData.cameraData.cameraTargetDescriptor;
             descriptor.depthBufferBits = 0;
             descriptor.msaaSamples = (int)MSAASamples.None;
-            RenderingUtils.ReAllocateIfNeeded (ref tempColorTarget, descriptor, FilterMode.Bilinear, TextureWrapMode.Clamp, name: "_CloudsTempTexture");
+            RenderingUtils.ReAllocateHandleIfNeeded (ref tempColorTarget, descriptor, FilterMode.Bilinear, TextureWrapMode.Clamp, name: "_CloudsTempTexture");
         }
 
         public override void Execute (ScriptableRenderContext context, ref RenderingData renderingData) {
@@ -38,10 +38,7 @@ public class CloudRenderFeature : ScriptableRendererFeature {
 
             var cmd = CommandBufferPool.Get (profilerTag);
             using (new ProfilingScope (cmd, new ProfilingSampler (profilerTag))) {
-                cmd.SetRenderTarget (tempColorTarget);
-                cmd.SetGlobalTexture ("_MainTex", cameraColorTarget);
-                cmd.DrawMesh (RenderingUtils.fullscreenMesh, Matrix4x4.identity, material);
-
+                Blitter.BlitCameraTexture (cmd, cameraColorTarget, tempColorTarget, material, 0);
                 Blitter.BlitCameraTexture (cmd, tempColorTarget, cameraColorTarget);
             }
 
@@ -103,9 +100,7 @@ public class CloudRenderFeature : ScriptableRendererFeature {
                 passData.material = material;
 
                 builder.SetRenderFunc ((PassData data, RasterGraphContext context) => {
-                    context.cmd.SetGlobalTexture ("_MainTex", data.cameraColor);
-                    context.cmd.DrawMesh (RenderingUtils.fullscreenMesh, Matrix4x4.identity, data.material);
-
+                    Blitter.BlitTexture (context.cmd, data.cameraColor, data.tempColor, data.material, 0);
                     Blitter.BlitTexture (context.cmd, data.tempColor, data.cameraColor);
                 });
             }
