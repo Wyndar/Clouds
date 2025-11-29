@@ -1,64 +1,86 @@
 
 Shader "Hidden/Clouds"
 {
-    
+
     Properties
     {
         _MainTex ("Texture", 2D) = "white" {}
     }
     SubShader
     {
-        
+        Tags
+        {
+            "RenderPipeline" = "UniversalPipeline"
+            "RenderType" = "Opaque"
+            "Queue" = "Overlay"
+        }
+
         // No culling or depth
         Cull Off ZWrite Off ZTest Always
 
         Pass
         {
-            CGPROGRAM
+            Name "Clouds"
+            Tags { "LightMode" = "UniversalForward" }
+
+            HLSLPROGRAM
 
             #pragma vertex vert
             #pragma fragment frag
+            #pragma multi_compile_local _ USE_CAMERA_OPAQUE_TEXTURE
 
-            #include "UnityCG.cginc"
+            #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl"
+            #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/DeclareDepthTexture.hlsl"
+            #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Lighting.hlsl"
             #include "Assets/Scripts/Clouds/Shaders/CloudDebug.cginc"
 
             // vertex input: position, UV
-            struct appdata {
-                float4 vertex : POSITION;
+            struct Attributes
+            {
+                float4 positionOS : POSITION;
                 float2 uv : TEXCOORD0;
+                UNITY_VERTEX_INPUT_INSTANCE_ID
             };
 
-            struct v2f {
-                float4 pos : SV_POSITION;
+            struct Varyings
+            {
+                float4 positionCS : SV_POSITION;
                 float2 uv : TEXCOORD0;
                 float3 viewVector : TEXCOORD1;
+                UNITY_VERTEX_OUTPUT_STEREO
             };
-            
-            v2f vert (appdata v) {
-                v2f output;
-                output.pos = UnityObjectToClipPos(v.vertex);
-                output.uv = v.uv;
-                // Camera space matches OpenGL convention where cam forward is -z. In unity forward is positive z.
-                // (https://docs.unity3d.com/ScriptReference/Camera-cameraToWorldMatrix.html)
-                float3 viewVector = mul(unity_CameraInvProjection, float4(v.uv * 2 - 1, 0, -1));
-                output.viewVector = mul(unity_CameraToWorld, float4(viewVector,0));
+
+            Varyings vert(Attributes input)
+            {
+                Varyings output;
+                UNITY_SETUP_INSTANCE_ID(input);
+                UNITY_INITIALIZE_VERTEX_OUTPUT_STEREO(output);
+
+                output.positionCS = TransformObjectToHClip(input.positionOS.xyz);
+                output.uv = input.uv;
+
+                float4 positionVS = mul(UNITY_MATRIX_I_P, float4(input.uv * 2.0 - 1.0, UNITY_NEAR_CLIP_VALUE, 1.0));
+                float3 viewVectorVS = positionVS.xyz / positionVS.w;
+                output.viewVector = mul((float3x3)UNITY_MATRIX_I_V, viewVectorVS);
                 return output;
             }
 
             // Textures
-            Texture3D<float4> NoiseTex;
-            Texture3D<float4> DetailNoiseTex;
-            Texture2D<float4> WeatherMap;
-            Texture2D<float4> BlueNoise;
-            
-            SamplerState samplerNoiseTex;
-            SamplerState samplerDetailNoiseTex;
-            SamplerState samplerWeatherMap;
-            SamplerState samplerBlueNoise;
+            TEXTURE3D(NoiseTex);
+            TEXTURE3D(DetailNoiseTex);
+            TEXTURE2D(WeatherMap);
+            TEXTURE2D(BlueNoise);
+            TEXTURE2D_X(_BlitTexture);
+            TEXTURE2D_X(_CameraOpaqueTexture);
 
-            sampler2D _MainTex;
-            sampler2D _CameraDepthTexture;
+            SAMPLER(samplerNoiseTex);
+            SAMPLER(samplerDetailNoiseTex);
+            SAMPLER(samplerWeatherMap);
+            SAMPLER(samplerBlueNoise);
+            SAMPLER(sampler_BlitTexture);
+            SAMPLER(sampler_CameraOpaqueTexture);
 
+            CBUFFER_START(UnityPerMaterial)
             // Shape settings
             float4 params;
             int3 mapSize;
@@ -85,7 +107,6 @@ Shader "Hidden/Clouds"
             float lightAbsorptionTowardSun;
             float lightAbsorptionThroughCloud;
             float darknessThreshold;
-            float4 _LightColor0;
             float4 colA;
             float4 colB;
 
@@ -102,6 +123,7 @@ Shader "Hidden/Clouds"
             float4 debugChannelWeight;
             float debugTileAmount;
             float viewerSize;
+            CBUFFER_END
             
             float remap(float v, float minOld, float maxOld, float minNew, float maxNew) {
                 return minNew + (v-minOld) * (maxNew - minNew) / (maxOld-minOld);
@@ -216,7 +238,8 @@ Shader "Hidden/Clouds"
 
             // Calculate proportion of light that reaches the given point from the lightsource
             float lightmarch(float3 position) {
-                float3 dirToLight = _WorldSpaceLightPos0.xyz;
+                Light mainLight = GetMainLight();
+                float3 dirToLight = mainLight.direction;
                 float dstInsideBox = rayBoxDst(boundsMin, boundsMax, position, 1/dirToLight).y;
                 
                 float stepSize = dstInsideBox/numStepsLight;
@@ -260,9 +283,20 @@ Shader "Hidden/Clouds"
                 }
             }
 
-          
-            float4 frag (v2f i) : SV_Target
+            float3 SampleSceneColor(float2 uv)
             {
+                #if defined(USE_CAMERA_OPAQUE_TEXTURE)
+                    return SAMPLE_TEXTURE2D_X(_CameraOpaqueTexture, sampler_CameraOpaqueTexture, uv).rgb;
+                #else
+                    return SAMPLE_TEXTURE2D_X(_BlitTexture, sampler_BlitTexture, uv).rgb;
+                #endif
+            }
+
+
+            float4 frag (Varyings i) : SV_Target
+            {
+                UNITY_SETUP_STEREO_EYE_INDEX_POST_VERTEX(i);
+
                 #if DEBUG_MODE == 1
                 if (debugViewMode != 0) {
                     float width = _ScreenParams.x;
@@ -276,15 +310,15 @@ Shader "Hidden/Clouds"
                     }
                 }
                 #endif
-                
+
                 // Create ray
                 float3 rayPos = _WorldSpaceCameraPos;
                 float viewLength = length(i.viewVector);
                 float3 rayDir = i.viewVector / viewLength;
-                
+
                 // Depth and cloud container intersection info:
-                float nonlin_depth = SAMPLE_DEPTH_TEXTURE(_CameraDepthTexture, i.uv);
-                float depth = LinearEyeDepth(nonlin_depth) * viewLength;
+                float nonlin_depth = SampleSceneDepth(i.uv);
+                float depth = LinearEyeDepth(nonlin_depth, _ZBufferParams) * viewLength;
                 float2 rayToContainerInfo = rayBoxDst(boundsMin, boundsMax, rayPos, 1/rayDir);
                 float dstToBox = rayToContainerInfo.x;
                 float dstInsideBox = rayToContainerInfo.y;
@@ -295,16 +329,17 @@ Shader "Hidden/Clouds"
                 // random starting offset (makes low-res results noisy rather than jagged/glitchy, which is nicer)
                 float randomOffset = BlueNoise.SampleLevel(samplerBlueNoise, squareUV(i.uv*3), 0);
                 randomOffset *= rayOffsetStrength;
-                
+
                 // Phase function makes clouds brighter around sun
-                float cosAngle = dot(rayDir, _WorldSpaceLightPos0.xyz);
+                Light mainLight = GetMainLight();
+                float cosAngle = dot(rayDir, mainLight.direction);
                 float phaseVal = phase(cosAngle);
 
                 float dstTravelled = randomOffset;
                 float dstLimit = min(depth-dstToBox, dstInsideBox);
-                
-                
-                
+
+
+
                 const float stepSize = 11;
 
                 // March through volume:
@@ -314,12 +349,12 @@ Shader "Hidden/Clouds"
                 while (dstTravelled < dstLimit) {
                     rayPos = entryPoint + rayDir * dstTravelled;
                     float density = sampleDensity(rayPos);
-                    
+
                     if (density > 0) {
                         float lightTransmittance = lightmarch(rayPos);
                         lightEnergy += density * stepSize * transmittance * lightTransmittance * phaseVal;
                         transmittance *= exp(-density * stepSize * lightAbsorptionThroughCloud);
-                    
+
                         // Exit early if T is close to zero as further samples won't affect the result much
                         if (transmittance < 0.01) {
                             break;
@@ -329,14 +364,14 @@ Shader "Hidden/Clouds"
                 }
 
                 // Add clouds to background
-                float3 backgroundCol = tex2D(_MainTex,i.uv);
-                float3 cloudCol = lightEnergy * _LightColor0;
+                float3 backgroundCol = SampleSceneColor(i.uv);
+                float3 cloudCol = lightEnergy * mainLight.color;
                 float3 col = backgroundCol * transmittance + cloudCol;
                 return float4(col,0);
 
             }
 
-            ENDCG
+            ENDHLSL
         }
     }
 }
