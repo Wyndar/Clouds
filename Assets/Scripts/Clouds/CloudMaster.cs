@@ -64,8 +64,12 @@ public class CloudMaster : MonoBehaviour {
         }
     }
 
-    [ImageEffectOpaque]
-    private void OnRenderImage (RenderTexture src, RenderTexture dest) {
+    public bool TryPrepareMaterial (out Material preparedMaterial) {
+        preparedMaterial = null;
+
+        if (shader == null || container == null) {
+            return false;
+        }
 
         // Validate inputs
         if (material == null || material.shader != shader) {
@@ -75,6 +79,9 @@ public class CloudMaster : MonoBehaviour {
 
         // Noise
         var noise = FindObjectOfType<NoiseGenerator> ();
+        if (noise == null) {
+            return false;
+        }
         noise.UpdateNoise ();
 
         material.SetTexture ("NoiseTex", noise.shapeTexture);
@@ -83,6 +90,9 @@ public class CloudMaster : MonoBehaviour {
 
         // Weathermap
         var weatherMapGen = FindObjectOfType<WeatherMap> ();
+        if (weatherMapGen == null) {
+            return false;
+        }
         if (!Application.isPlaying) {
             weatherMapGen.UpdateMap ();
         }
@@ -127,12 +137,8 @@ public class CloudMaster : MonoBehaviour {
         material.SetColor ("colA", colA);
         material.SetColor ("colB", colB);
 
-        // Bit does the following:
-        // - sets _MainTex property on material to the source texture
-        // - sets the render target to the destination texture
-        // - draws a full-screen quad
-        // This copies the src texture to the dest texture, with whatever modifications the shader makes
-        Graphics.Blit (src, dest, material);
+        preparedMaterial = material;
+        return true;
     }
 
     void SetDebugParams () {
