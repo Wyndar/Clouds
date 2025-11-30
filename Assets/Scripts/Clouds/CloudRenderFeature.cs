@@ -1,138 +1,98 @@
-using UnityEngine;
+﻿using UnityEngine;
 using UnityEngine.Rendering;
 using UnityEngine.Rendering.Universal;
 using UnityEngine.Rendering.RenderGraphModule;
 
-public class CloudRenderFeature : ScriptableRendererFeature {
-    class CloudRenderPass : ScriptableRenderPass {
-        readonly string profilerTag = "Cloud Render";
-        RTHandle cameraColorTarget;
-        RTHandle tempColorTarget;
-
-        public CloudRenderPass () {
-            renderPassEvent = RenderPassEvent.AfterRenderingSkybox;
+public class CloudRenderFeature : ScriptableRendererFeature
+{
+    class CloudRenderPass : ScriptableRenderPass
+    {
+        static Material copyMaterial;
+        static Material CopyMaterial
+        {
+            get
+            {
+                if (copyMaterial == null)
+                    copyMaterial = new Material(Shader.Find("Hidden/CopyTexture"));
+                return copyMaterial;
+            }
         }
 
-        public override void OnCameraSetup (CommandBuffer cmd, ref RenderingData renderingData) {
-            cameraColorTarget = renderingData.cameraData.renderer.cameraColorTargetHandle;
-            var descriptor = renderingData.cameraData.cameraTargetDescriptor;
-            descriptor.depthBufferBits = 0;
-            descriptor.msaaSamples = (int)MSAASamples.None;
-            RenderingUtils.ReAllocateIfNeeded (ref tempColorTarget, descriptor, FilterMode.Bilinear, TextureWrapMode.Clamp, name: "_CloudsTempTexture");
-        }
-
-        public override void Execute (ScriptableRenderContext context, ref RenderingData renderingData) {
-            if (cameraColorTarget == null) {
-                return;
-            }
-
-            var camera = renderingData.cameraData.camera;
-            var cloudMaster = camera.GetComponent<CloudMaster> ();
-            if (cloudMaster == null) {
-                return;
-            }
-
-            if (!cloudMaster.TryPrepareMaterial (out var material)) {
-                return;
-            }
-
-            var cmd = CommandBufferPool.Get (profilerTag);
-            using (new ProfilingScope (cmd, new ProfilingSampler (profilerTag))) {
-                cmd.SetRenderTarget (tempColorTarget);
-                cmd.SetGlobalTexture ("_MainTex", cameraColorTarget);
-                cmd.DrawMesh (RenderingUtils.fullscreenMesh, Matrix4x4.identity, material);
-
-                Blitter.BlitCameraTexture (cmd, tempColorTarget, cameraColorTarget);
-            }
-
-            context.ExecuteCommandBuffer (cmd);
-            CommandBufferPool.Release (cmd);
-        }
-
-        public override void OnCameraCleanup (CommandBuffer cmd) {
-            cameraColorTarget = null;
-        }
-
-        class PassData {
-            public TextureHandle cameraColor;
-            public TextureHandle tempColor;
+        class PassData
+        {
+            public TextureHandle source;
             public Material material;
         }
 
-        public override void RecordRenderGraph (RenderGraph renderGraph, ContextContainer frameData) {
-            if (renderGraph == null) {
-                return;
-            }
-
-            var cameraData = frameData.Get<UniversalCameraData> ();
+        public override void RecordRenderGraph(RenderGraph renderGraph, ContextContainer frameData)
+        {
+            var cameraData = frameData.Get<UniversalCameraData>();
             var camera = cameraData.camera;
-            if (camera == null) {
+            if (camera == null)
                 return;
-            }
 
-            var cloudMaster = camera.GetComponent<CloudMaster> ();
-            if (cloudMaster == null) {
+            var cloudMaster = camera.GetComponent<CloudMaster>();
+            if (cloudMaster == null)
                 return;
-            }
 
-            if (!cloudMaster.TryPrepareMaterial (out var material)) {
+            if (!cloudMaster.TryPrepareMaterial(out var cloudMaterial))
                 return;
-            }
 
-            var resourceData = frameData.Get<UniversalResourceData> ();
-            var targetDescriptor = cameraData.cameraTargetDescriptor;
-            targetDescriptor.depthBufferBits = 0;
-            targetDescriptor.msaaSamples = (int)MSAASamples.None;
+            var resources = frameData.Get<UniversalResourceData>();
+            TextureHandle cameraColor = resources.cameraColor;
+            if (!cameraColor.IsValid())
+                return;
 
-            var tempDesc = new TextureDesc (targetDescriptor.width, targetDescriptor.height) {
-                colorFormat = targetDescriptor.graphicsFormat,
-                depthBufferBits = DepthBits.None,
-                msaaSamples = MSAASamples.None,
-                filterMode = FilterMode.Bilinear,
-                wrapMode = TextureWrapMode.Clamp,
-                name = "_CloudsTempTexture"
-            };
+            TextureDesc desc = renderGraph.GetTextureDesc(cameraColor);
+            desc.clearBuffer = false;
+            desc.name = "_CloudsTemp";
+            TextureHandle temp = renderGraph.CreateTexture(desc);
 
-            using (var builder = renderGraph.AddRasterRenderPass<PassData> (profilerTag, out var passData, new ProfilingSampler (profilerTag))) {
-                var tempTexture = renderGraph.CreateTexture (tempDesc);
-                passData.cameraColor = resourceData.activeColorTexture;
-                passData.tempColor = tempTexture;
-                builder.UseTexture (passData.cameraColor, AccessFlags.ReadWrite);
-                builder.UseTexture (passData.tempColor, AccessFlags.ReadWrite);
-                builder.SetRenderAttachment (passData.tempColor, 0);
-                passData.material = material;
+            using (var builder = renderGraph.AddRasterRenderPass<PassData>(
+                "CopyCamera", out var passData, new ProfilingSampler("CopyCamera")))
+            {
+                passData.source = cameraColor;
+                passData.material = CopyMaterial;
 
-                builder.SetRenderFunc ((PassData data, RasterGraphContext context) => {
-                    context.cmd.SetGlobalTexture ("_MainTex", data.cameraColor);
-                    context.cmd.DrawMesh (RenderingUtils.fullscreenMesh, Matrix4x4.identity, data.material);
+                builder.UseTexture(passData.source, AccessFlags.Read);
+                builder.SetRenderAttachment(temp, 0);
+                builder.AllowGlobalStateModification(true);
 
-                    Blitter.BlitTexture (context.cmd, data.tempColor, data.cameraColor);
+                builder.SetRenderFunc((PassData data, RasterGraphContext ctx) =>
+                {
+                    ctx.cmd.SetGlobalTexture("_SourceTex", data.source);
+                    ctx.cmd.DrawProcedural(Matrix4x4.identity, data.material, 0, MeshTopology.Triangles, 3);
                 });
             }
-        }
 
-        public void Dispose () {
-            tempColorTarget?.Release ();
+            using (var builder = renderGraph.AddRasterRenderPass<PassData>(
+                "CloudRender", out var passData, new ProfilingSampler("CloudRender")))
+            {
+                passData.source = temp;
+                passData.material = cloudMaterial;
+
+                builder.UseTexture(passData.source, AccessFlags.Read);
+                builder.SetRenderAttachment(cameraColor, 0);
+                builder.AllowGlobalStateModification(true);
+
+                builder.SetRenderFunc((PassData data, RasterGraphContext ctx) =>
+                {
+                    ctx.cmd.SetGlobalTexture("_MainTex", data.source);
+                    ctx.cmd.DrawProcedural(Matrix4x4.identity, data.material, 0, MeshTopology.Triangles, 3);
+                });
+            }
         }
     }
 
     CloudRenderPass cloudPass;
 
-    public override void Create () {
-        cloudPass = new CloudRenderPass ();
+    public override void Create()
+    {
+        cloudPass = new CloudRenderPass();
     }
 
-    public override void AddRenderPasses (ScriptableRenderer renderer, ref RenderingData renderingData) {
-        if (cloudPass == null) {
-            return;
-        }
-
-        renderer.EnqueuePass (cloudPass);
-    }
-
-    protected override void Dispose (bool disposing) {
-        if (disposing) {
-            cloudPass?.Dispose ();
-        }
+    public override void AddRenderPasses(ScriptableRenderer renderer, ref RenderingData renderingData)
+    {
+        renderer.EnqueuePass(cloudPass);
     }
 }
