@@ -68,6 +68,8 @@ public class CloudMaster : MonoBehaviour {
         preparedMaterial = null;
 
         if (shader == null || container == null) {
+            Debug.LogWarning ($"{nameof(CloudMaster)} on '{name}' is missing a required reference: " +
+                $"shader assigned: {shader != null}, container assigned: {container != null}.", this);
             return false;
         }
 
@@ -80,6 +82,8 @@ public class CloudMaster : MonoBehaviour {
         // Noise
         var noise = FindFirstObjectByType<NoiseGenerator> ();
         if (noise == null) {
+            Debug.LogWarning ($"{nameof(CloudMaster)} on '{name}' could not find a {nameof(NoiseGenerator)} in the scene. " +
+                "Cloud rendering will be skipped until one is available.", this);
             return false;
         }
         noise.UpdateNoise ();
@@ -91,6 +95,8 @@ public class CloudMaster : MonoBehaviour {
         // Weathermap
         var weatherMapGen = FindFirstObjectByType<WeatherMap> ();
         if (weatherMapGen == null) {
+            Debug.LogWarning ($"{nameof(CloudMaster)} on '{name}' could not find a {nameof(WeatherMap)} in the scene. " +
+                "Cloud rendering will be skipped until one is available.", this);
             return false;
         }
         if (!Application.isPlaying) {
